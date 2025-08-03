@@ -1,0 +1,394 @@
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import numpy as np
+import random
+from collections import deque
+from matplotlib.widgets import Button, TextBox
+import time
+
+# Define colors for each face
+FACE_COLORS = {
+    'U': 'white',
+    'D': 'yellow',
+    'F': 'green',
+    'B': 'blue',
+    'L': 'orange',
+    'R': 'red'
+}
+
+# Standard notation for face turns
+MOVES = ['U', 'D', 'F', 'B', 'L', 'R', 'U\'', 'D\'', 'F\'', 'B\'', 'L\'', 'R\'']
+
+class Cubelet:
+    def __init__(self, position):
+        self.position = position
+        self.colors = {face: FACE_COLORS[face] for face in FACE_COLORS if self.has_face(face)}
+    
+    def has_face(self, face):
+        x, y, z = self.position
+        return (
+            (face == 'U' and y == 1) or
+            (face == 'D' and y == -1) or
+            (face == 'F' and z == 1) or
+            (face == 'B' and z == -1) or
+            (face == 'L' and x == -1) or
+            (face == 'R' and x == 1)
+        )
+    
+    def rotate(self, axis, angle):
+        """Rotate the cubelet around an axis (x, y, or z) by 90 degrees"""
+        angle_rad = np.radians(angle)
+        rotation_matrix = None
+        
+        if axis == 'x':
+            rotation_matrix = np.array([
+                [1, 0, 0],
+                [0, np.cos(angle_rad), -np.sin(angle_rad)],
+                [0, np.sin(angle_rad), np.cos(angle_rad)]
+            ])
+        elif axis == 'y':
+            rotation_matrix = np.array([
+                [np.cos(angle_rad), 0, np.sin(angle_rad)],
+                [0, 1, 0],
+                [-np.sin(angle_rad), 0, np.cos(angle_rad)]
+            ])
+        elif axis == 'z':
+            rotation_matrix = np.array([
+                [np.cos(angle_rad), -np.sin(angle_rad), 0],
+                [np.sin(angle_rad), np.cos(angle_rad), 0],
+                [0, 0, 1]
+            ])
+        
+        if rotation_matrix is not None:
+            self.position = tuple(np.round(np.dot(rotation_matrix, self.position)).astype(int))
+            
+            # Update colors based on new orientation
+            new_colors = {}
+            for face, color in self.colors.items():
+                if face == 'U' or face == 'D':
+                    new_face = self._get_new_face(face, 'y', angle)
+                elif face == 'F' or face == 'B':
+                    new_face = self._get_new_face(face, 'z', angle)
+                elif face == 'L' or face == 'R':
+                    new_face = self._get_new_face(face, 'x', angle)
+                new_colors[new_face] = color
+            self.colors = new_colors
+    
+    def _get_new_face(self, face, axis, angle):
+        """Determine new face after rotation"""
+        if axis == 'x':
+            if face == 'F':
+                return 'U' if angle == 90 else 'D'
+            elif face == 'U':
+                return 'B' if angle == 90 else 'F'
+            elif face == 'B':
+                return 'D' if angle == 90 else 'U'
+            elif face == 'D':
+                return 'F' if angle == 90 else 'B'
+        elif axis == 'y':
+            if face == 'F':
+                return 'L' if angle == 90 else 'R'
+            elif face == 'L':
+                return 'B' if angle == 90 else 'F'
+            elif face == 'B':
+                return 'R' if angle == 90 else 'L'
+            elif face == 'R':
+                return 'F' if angle == 90 else 'B'
+        elif axis == 'z':
+            if face == 'U':
+                return 'L' if angle == 90 else 'R'
+            elif face == 'L':
+                return 'D' if angle == 90 else 'U'
+            elif face == 'D':
+                return 'R' if angle == 90 else 'L'
+            elif face == 'R':
+                return 'U' if angle == 90 else 'D'
+        return face
+
+class RubiksCube:
+    def __init__(self):
+        self.cubelets = []
+        for x in [-1, 0, 1]:
+            for y in [-1, 0, 1]:
+                for z in [-1, 0, 1]:
+                    if x == 0 and y == 0 and z == 0:
+                        continue  # Skip the center cubelet
+                    self.cubelets.append(Cubelet((x, y, z)))
+        self.move_history = []
+        self.solution = []
+    
+    def is_solved(self):
+        for cubelet in self.cubelets:
+            for face, color in cubelet.colors.items():
+                if color != FACE_COLORS[face]:
+                    return False
+        return True
+    
+    def rotate_face(self, face, clockwise=True):
+        axis = None
+        layer = []
+        
+        if face == 'U':
+            axis = 'y'
+            layer = [c for c in self.cubelets if c.position[1] == 1]
+        elif face == 'D':
+            axis = 'y'
+            layer = [c for c in self.cubelets if c.position[1] == -1]
+        elif face == 'F':
+            axis = 'z'
+            layer = [c for c in self.cubelets if c.position[2] == 1]
+        elif face == 'B':
+            axis = 'z'
+            layer = [c for c in self.cubelets if c.position[2] == -1]
+        elif face == 'L':
+            axis = 'x'
+            layer = [c for c in self.cubelets if c.position[0] == -1]
+        elif face == 'R':
+            axis = 'x'
+            layer = [c for c in self.cubelets if c.position[0] == 1]
+        
+        angle = 90 if clockwise else -90
+        for cubelet in layer:
+            cubelet.rotate(axis, angle)
+        
+        move = face if clockwise else face + "'"
+        self.move_history.append(move)
+    
+    def scramble(self, n=20):
+        moves = ['U', 'D', 'F', 'B', 'L', 'R']
+        for _ in range(n):
+            move = random.choice(moves)
+            clockwise = random.choice([True, False])
+            self.rotate_face(move, clockwise)
+    
+    def solve(self):
+        """Layer-by-layer solving algorithm"""
+        self.solution = []
+        
+        # Step 1: Solve the white cross (Daisy)
+        self._solve_white_cross()
+        
+        # Step 2: Solve the white corners
+        self._solve_white_corners()
+        
+        # Step 3: Solve the middle layer
+        self._solve_middle_layer()
+        
+        # Step 4: Solve the yellow cross
+        self._solve_yellow_cross()
+        
+        # Step 5: Position the yellow edges
+        self._position_yellow_edges()
+        
+        # Step 6: Solve the yellow corners
+        self._solve_yellow_corners()
+        
+        # Step 7: Orient the yellow corners
+        self._orient_yellow_corners()
+        
+        return self.solution
+    
+    def _solve_white_cross(self):
+        """Solve the white cross on the down face"""
+        # Implement the white cross solving logic
+        pass
+    
+    def _solve_white_corners(self):
+        """Solve the white corners"""
+        # Implement the white corners solving logic
+        pass
+    
+    def _solve_middle_layer(self):
+        """Solve the middle layer edges"""
+        # Implement the middle layer solving logic
+        pass
+    
+    def _solve_yellow_cross(self):
+        """Create a yellow cross on the up face"""
+        # Implement the yellow cross solving logic
+        pass
+    
+    def _position_yellow_edges(self):
+        """Position the yellow edges correctly"""
+        # Implement the edge positioning logic
+        pass
+    
+    def _solve_yellow_corners(self):
+        """Position the yellow corners"""
+        # Implement the corner positioning logic
+        pass
+    
+    def _orient_yellow_corners(self):
+        """Orient the yellow corners correctly"""
+        # Implement the corner orientation logic
+        pass
+    
+    def execute_moves(self, moves):
+        """Execute a sequence of moves"""
+        for move in moves:
+            if move.endswith("'"):
+                self.rotate_face(move[0], False)
+            else:
+                self.rotate_face(move, True)
+            time.sleep(0.5)  # For visualization
+            draw_cube(ax, cube)
+            plt.draw()
+
+def draw_cube(ax, cube):
+    ax.clear()
+    ax.set_xlim([-1.5, 1.5])
+    ax.set_ylim([-1.5, 1.5])
+    ax.set_zlim([-1.5, 1.5])
+    ax.set_box_aspect([1, 1, 1])
+    ax.axis('off')
+    ax.set_facecolor('#f0f0f0')
+    
+    for cubelet in cube.cubelets:
+        draw_cubelet(ax, cubelet)
+
+def draw_cubelet(ax, cubelet):
+    x, y, z = cubelet.position
+    size = 0.95
+    ox, oy, oz = x - size/2, y - size/2, z - size/2
+    
+    faces = {
+        'U': ([ox, ox+size, ox+size, ox], [oy+size, oy+size, oy+size, oy+size], [oz, oz, oz+size, oz+size]),
+        'D': ([ox, ox+size, ox+size, ox], [oy, oy, oy, oy], [oz, oz, oz+size, oz+size]),
+        'F': ([ox, ox+size, ox+size, ox], [oy, oy, oy+size, oy+size], [oz+size, oz+size, oz+size, oz+size]),
+        'B': ([ox, ox+size, ox+size, ox], [oy, oy, oy+size, oy+size], [oz, oz, oz, oz]),
+        'L': ([ox, ox, ox, ox], [oy, oy+size, oy+size, oy], [oz, oz, oz+size, oz+size]),
+        'R': ([ox+size, ox+size, ox+size, ox+size], [oy, oy+size, oy+size, oy], [oz, oz, oz+size, oz+size]),
+    }
+
+    for face, (xs, ys, zs) in faces.items():
+        if face in cubelet.colors:
+            verts = [list(zip(xs, ys, zs))]
+            poly = Poly3DCollection(verts, facecolors=cubelet.colors[face], edgecolor='black', linewidths=1, alpha=1.0)
+            ax.add_collection3d(poly)
+
+def show_interactive_cube():
+    global cube, ax
+    
+    cube = RubiksCube()
+    fig = plt.figure(figsize=(14, 12), facecolor='#f0f0f0')
+    fig.suptitle("Rubik's Cube Solver with 3D Visualization", fontsize=16, y=0.95)
+    
+    gs = fig.add_gridspec(2, 2, width_ratios=[3, 1], height_ratios=[4, 1])
+    
+    ax = fig.add_subplot(gs[0, 0], projection='3d')
+    ax.set_title("3D Cube Visualization", pad=20)
+    draw_cube(ax, cube)
+    
+    control_ax = fig.add_subplot(gs[0, 1])
+    control_ax.axis('off')
+    control_ax.set_title("Controls & Status", pad=20)
+    
+    button_ax = fig.add_subplot(gs[1, :])
+    button_ax.axis('off')
+    
+    # Status display
+    status_text = control_ax.text(0.1, 0.9, 
+                                "Cube Status:\n" + 
+                                ("SOLVED!" if cube.is_solved() else "Not Solved") + 
+                                "\n\nMove History:\n" + 
+                                " ".join(cube.move_history[-5:]), 
+                                fontsize=10, va='top')
+    
+    # Control instructions
+    control_ax.text(0.1, 0.5, 
+                   "Keyboard Controls:\n"
+                   "u,d,f,b,l,r - Clockwise\n"
+                   "U,D,F,B,L,R - Counter-clockwise\n"
+                   "s - Scramble\n"
+                   "r - Reset\n"
+                   "x - Solve\n"
+                   "arrows - Rotate view", 
+                   fontsize=10, va='top')
+    
+    # Create buttons
+    btn_width = 0.08
+    btn_height = 0.04
+    btn_spacing = 0.01
+    
+    # Row 1: Clockwise rotations
+    btn_u = Button(plt.axes([0.05, 0.05, btn_width, btn_height]), 'U', color=FACE_COLORS['U'], hovercolor='lightgray')
+    btn_d = Button(plt.axes([0.15, 0.05, btn_width, btn_height]), 'D', color=FACE_COLORS['D'], hovercolor='lightgray')
+    btn_f = Button(plt.axes([0.25, 0.05, btn_width, btn_height]), 'F', color=FACE_COLORS['F'], hovercolor='lightgray')
+    btn_b = Button(plt.axes([0.35, 0.05, btn_width, btn_height]), 'B', color=FACE_COLORS['B'], hovercolor='lightgray')
+    btn_l = Button(plt.axes([0.45, 0.05, btn_width, btn_height]), 'L', color=FACE_COLORS['L'], hovercolor='lightgray')
+    btn_r = Button(plt.axes([0.55, 0.05, btn_width, btn_height]), 'R', color=FACE_COLORS['R'], hovercolor='lightgray')
+    
+    # Row 2: Counter-clockwise rotations
+    btn_U = Button(plt.axes([0.05, 0.10, btn_width, btn_height]), 'U\'', color='lightgray', hovercolor=FACE_COLORS['U'])
+    btn_D = Button(plt.axes([0.15, 0.10, btn_width, btn_height]), 'D\'', color='lightgray', hovercolor=FACE_COLORS['D'])
+    btn_F = Button(plt.axes([0.25, 0.10, btn_width, btn_height]), 'F\'', color='lightgray', hovercolor=FACE_COLORS['F'])
+    btn_B = Button(plt.axes([0.35, 0.10, btn_width, btn_height]), 'B\'', color='lightgray', hovercolor=FACE_COLORS['B'])
+    btn_L = Button(plt.axes([0.45, 0.10, btn_width, btn_height]), 'L\'', color='lightgray', hovercolor=FACE_COLORS['L'])
+    btn_R = Button(plt.axes([0.55, 0.10, btn_width, btn_height]), 'R\'', color='lightgray', hovercolor=FACE_COLORS['R'])
+    
+    # Row 3: Actions
+    btn_scramble = Button(plt.axes([0.65, 0.10, 0.10, btn_height]), 'Scramble', color='#ff9999', hovercolor='#ff6666')
+    btn_reset = Button(plt.axes([0.65, 0.05, 0.10, btn_height]), 'Reset', color='#99ff99', hovercolor='#66ff66')
+    btn_solve = Button(plt.axes([0.76, 0.05, 0.10, btn_height]), 'Solve', color='#9999ff', hovercolor='#6666ff')
+    
+    # Button callbacks
+    def update_display():
+        draw_cube(ax, cube)
+        status_text.set_text(
+            "Cube Status:\n" + 
+            ("SOLVED!" if cube.is_solved() else "Not Solved") + 
+            "\n\nMove History:\n" + 
+            " ".join(cube.move_history[-5:]))
+        plt.draw()
+    
+    btn_u.on_clicked(lambda x: (cube.rotate_face('U', True), update_display()))
+    btn_d.on_clicked(lambda x: (cube.rotate_face('D', True), update_display()))
+    btn_f.on_clicked(lambda x: (cube.rotate_face('F', True), update_display()))
+    btn_b.on_clicked(lambda x: (cube.rotate_face('B', True), update_display()))
+    btn_l.on_clicked(lambda x: (cube.rotate_face('L', True), update_display()))
+    btn_r.on_clicked(lambda x: (cube.rotate_face('R', True), update_display()))
+    
+    btn_U.on_clicked(lambda x: (cube.rotate_face('U', False), update_display()))
+    btn_D.on_clicked(lambda x: (cube.rotate_face('D', False), update_display()))
+    btn_F.on_clicked(lambda x: (cube.rotate_face('F', False), update_display()))
+    btn_B.on_clicked(lambda x: (cube.rotate_face('B', False), update_display()))
+    btn_L.on_clicked(lambda x: (cube.rotate_face('L', False), update_display()))
+    btn_R.on_clicked(lambda x: (cube.rotate_face('R', False), update_display()))
+    
+    btn_scramble.on_clicked(lambda x: (cube.scramble(), update_display()))
+    btn_reset.on_clicked(lambda x: (cube.__init__(), update_display()))
+    btn_solve.on_clicked(lambda x: (cube.solve(), update_display()))
+    
+    def on_key(event):
+        if event.key in ['u', 'd', 'f', 'b', 'l', 'r']:
+            cube.rotate_face(event.key.upper(), clockwise=True)
+        elif event.key in ['U', 'D', 'F', 'B', 'L', 'R']:
+            cube.rotate_face(event.key, clockwise=False)
+        elif event.key == 's':
+            cube.scramble()
+        elif event.key == 'r':
+            cube.__init__()
+        elif event.key == 'x':
+            solution = cube.solve()
+            print("Solution:", " ".join(solution))
+            cube.execute_moves(solution)
+        elif event.key == 'left':
+            ax.azim -= 10
+        elif event.key == 'right':
+            ax.azim += 10
+        elif event.key == 'up':
+            ax.elev += 10
+        elif event.key == 'down':
+            ax.elev -= 10
+        update_display()
+    
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    
+    # Set initial view
+    ax.view_init(30, 45)
+    
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    show_interactive_cube()
